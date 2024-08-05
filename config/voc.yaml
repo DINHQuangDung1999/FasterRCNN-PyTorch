@@ -1,8 +1,8 @@
 dataset_params:
-  im_train_path: 'VOC2007/JPEGImages'
-  ann_train_path: 'VOC2007/Annotations'
-  im_test_path: 'VOC2007-test/JPEGImages'
-  ann_test_path: 'VOC2007-test/Annotations'
+  im_train_path: 'data/VOC2007/JPEGImages'
+  ann_train_path: 'data/VOC2007/Annotations'
+  im_test_path: 'data/VOC2007-test/JPEGImages'
+  ann_test_path: 'data/VOC2007-test/Annotations'
   num_classes : 21
 
 model_params:

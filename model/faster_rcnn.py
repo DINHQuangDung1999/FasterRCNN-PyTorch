@@ -739,6 +739,19 @@ class ROIHead(nn.Module):
         pred_boxes, pred_scores, pred_labels = pred_boxes[keep], pred_scores[keep], pred_labels[keep]
         return pred_boxes, pred_labels, pred_scores
 
+im = torch.rand(4,3, 600, 1000)
+vgg16 = torchvision.models.vgg16(pretrained=True)
+backbone = vgg16.features[:-1]
+backbone(im).shape
+
+resnet = torchvision.models.resnet101(pretrained=True)
+resnet_layers = []
+for layer in resnet.children():
+    resnet_layers.append(layer)
+
+newmodel = torch.nn.Sequential(*resnet_layers[:-2])
+print(newmodel)
+newmodel(im).shape 
 
 class FasterRCNN(nn.Module):
     def __init__(self, model_config, num_classes):
@@ -827,4 +840,8 @@ class FasterRCNN(nn.Module):
             frcnn_output['boxes'] = transform_boxes_to_original_size(frcnn_output['boxes'],
                                                                      image.shape[-2:],
                                                                      old_shape)
+        # print(rpn_output['rpn_localization_loss'])
+        # if torch.isinf(rpn_output['rpn_localization_loss']) == True:
+        #     print('breakpoint')
+        #     breakpoint()
         return rpn_output, frcnn_output

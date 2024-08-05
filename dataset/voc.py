@@ -54,19 +54,37 @@ def load_images_and_anns(im_dir, ann_dir, label2idx):
 
 
 class VOCDataset(Dataset):
-    def __init__(self, split, im_dir, ann_dir):
+    def __init__(self, split, im_dir, ann_dir, is_zsd = False):
         self.split = split
         self.im_dir = im_dir
         self.ann_dir = ann_dir
-        classes = [
-            'person', 'bird', 'cat', 'cow', 'dog', 'horse', 'sheep',
-            'aeroplane', 'bicycle', 'boat', 'bus', 'car', 'motorbike', 'train',
-            'bottle', 'chair', 'diningtable', 'pottedplant', 'sofa', 'tvmonitor'
-        ]
-        classes = sorted(classes)
-        classes = ['background'] + classes
-        self.label2idx = {classes[idx]: idx for idx in range(len(classes))}
-        self.idx2label = {idx: classes[idx] for idx in range(len(classes))}
+        self.dataset_name = im_dir.split('/')[2]
+        self.set_name = im_dir.split('/')[-1]
+
+        if is_zsd == True:
+            if self.dataset_name == 'PascalVOC':
+                self.seen_classes   = sorted(['person', 'bird', 'cat', 'cow', 'horse', 'sheep',
+                                        'aeroplane', 'bicycle', 'boat', 'bus','motorbike', 
+                                        'bottle', 'chair', 'diningtable', 'pottedplant','tvmonitor' ])
+                self.unseen_classes = sorted(['car', 'dog', 'sofa', 'train'])
+
+                classes_zsd = ['background'] + self.seen_classes + self.unseen_classes
+                self.classes_zsd    = classes_zsd
+
+        if self.dataset_name == 'PascalVOC':
+            classes = sorted(['person', 'bird', 'cat', 'cow', 'dog', 'horse', 'sheep',
+                            'aeroplane', 'bicycle', 'boat', 'bus', 'car', 'motorbike', 'train',
+                            'bottle', 'chair', 'diningtable', 'pottedplant', 'sofa', 'tvmonitor'])
+
+            classes = ['background'] + classes
+            self.classes    = classes
+
+        self.label2idx  = {classes[idx]: idx for idx in range(len(classes))} # if is_zsd == True then this maps to zsd indices
+        self.idx2label  = {idx: classes[idx] for idx in range(len(classes))}
+        self.idxzsd_to_idx = {self.classes_zsd.index(label): self.classes.index(label) \
+                              for label in self.classes}
+        self.idx_to_idxzsd = {idx: idx_zsd for idx, idx_zsd in self.idxzsd_to_idx.items()}
+        
         print(self.idx2label)
         self.images_info = load_images_and_anns(im_dir, ann_dir, self.label2idx)
     
