@@ -54,11 +54,11 @@ def load_images_and_anns(im_dir, ann_dir, label2idx):
 
 
 class VOCDataset(Dataset):
-    def __init__(self, split, im_dir, ann_dir, is_zsd = False):
+    def __init__(self, split, dataset_name, im_dir, ann_dir, is_zsd = False):
         self.split = split
         self.im_dir = im_dir
         self.ann_dir = ann_dir
-        self.dataset_name = im_dir.split('/')[2]
+        self.dataset_name = dataset_name
         self.set_name = im_dir.split('/')[-1]
 
         if is_zsd == True:
@@ -70,21 +70,35 @@ class VOCDataset(Dataset):
 
                 classes_zsd = ['background'] + self.seen_classes + self.unseen_classes
                 self.classes_zsd    = classes_zsd
+            if self.dataset_name == 'DOTA':
+                self.seen_classes   = sorted(['plane', 'ship', 'storage-tank', 'baseball-diamond', 'basketball-court', 
+                                              'ground-track-field', 'harbor', 'bridge', 'large-vehicle', 
+                                              'small-vehicle', 'roundabout', 'container-crane'])
+                self.unseen_classes = sorted(['helicopter', 'soccer-ball-field', 'swimming-pool', 'tennis-court'])
 
-        if self.dataset_name == 'PascalVOC':
-            classes = sorted(['person', 'bird', 'cat', 'cow', 'dog', 'horse', 'sheep',
-                            'aeroplane', 'bicycle', 'boat', 'bus', 'car', 'motorbike', 'train',
-                            'bottle', 'chair', 'diningtable', 'pottedplant', 'sofa', 'tvmonitor'])
+                classes_zsd = ['background'] + self.seen_classes + self.unseen_classes
+                self.classes_zsd    = classes_zsd
+            if self.dataset_name == 'DIOR':
+                self.seen_classes   = sorted(['airplane', 'baseballfield', 'bridge', 'chimney', 'dam', 
+                                              'Expressway-Service-area', 'Expressway-toll-station', 
+                                              'golffield', 'harbor', 'overpass', 'ship', 'stadium', 
+                                              'storagetank', 'tenniscourt', 'trainstation', 'vehicle'])
+                self.unseen_classes = sorted(['airport', 'basketballcourt', 'groundtrackfield', 'windmill'])
 
+                classes_zsd = ['background'] + self.seen_classes + self.unseen_classes
+                self.classes_zsd    = classes_zsd
+
+            classes = sorted(self.classes_zsd[1:])
             classes = ['background'] + classes
             self.classes    = classes
 
         self.label2idx  = {classes[idx]: idx for idx in range(len(classes))} # if is_zsd == True then this maps to zsd indices
         self.idx2label  = {idx: classes[idx] for idx in range(len(classes))}
-        self.idxzsd_to_idx = {self.classes_zsd.index(label): self.classes.index(label) \
-                              for label in self.classes}
-        self.idx_to_idxzsd = {idx: idx_zsd for idx, idx_zsd in self.idxzsd_to_idx.items()}
         
+        self.idx_to_idxzsd = {self.classes.index(label): self.classes_zsd.index(label) \
+                              for label in self.classes}
+        self.idxzsd_to_idx = {idx_zsd: idx for idx, idx_zsd in self.idx_to_idxzsd.items()}
+        # breakpoint()
         print(self.idx2label)
         self.images_info = load_images_and_anns(im_dir, ann_dir, self.label2idx)
     
@@ -101,7 +115,7 @@ class VOCDataset(Dataset):
         im_tensor = torchvision.transforms.ToTensor()(im)
         targets = {}
         targets['bboxes'] = torch.as_tensor([detection['bbox'] for detection in im_info['detections']])
-        targets['labels'] = torch.as_tensor([detection['label'] for detection in im_info['detections']])
+        targets['labels'] = torch.as_tensor([self.idx_to_idxzsd[detection['label']] for detection in im_info['detections']])
         if to_flip:
             for idx, box in enumerate(targets['bboxes']):
                 x1, y1, x2, y2 = box

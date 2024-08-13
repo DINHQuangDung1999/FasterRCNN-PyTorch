@@ -102,9 +102,9 @@ ENV/
 *.zip
 *.pt
 
-VOC2007/
-VOC2007-test/
 dump/
 data/
 bbox_results/
 figures/
+log/
+checkpoints/

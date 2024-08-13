@@ -8,7 +8,7 @@ import random
 from easydict import EasyDict
 from model.faster_rcnn import FasterRCNN
 from tqdm import tqdm
-from dataset.coco import CocoDataset
+from dataset.voc import VOCDataset
 from torch.utils.data.dataloader import DataLoader
 from torch.optim.lr_scheduler import MultiStepLR
 from tools.embedding import get_embeddings
@@ -28,9 +28,9 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # len(os.listdir(f'/home/qdinh/data/DIOR/annotations_VOC/testseen'))
 
 def train(args):
-    args = EasyDict({'config_path': 'config/dota_trad_resnet.yaml',
+    args = EasyDict({'config_path': 'config/dior_trad_resnet.yaml',
                     #  'checkpoint': None,
-                     'checkpoint': '/home/qdinh/FasterRCNN-PyTorch/checkpoints/DOTA/frcnn_trad_0.pt'
+                     'checkpoint': '/home/qdinh/FasterRCNN-PyTorch/checkpoints/DIOR/frcnn_trad_0.pt'
                      })
     # Read the config file #
     with open(args.config_path, 'r') as file:
@@ -51,13 +51,13 @@ def train(args):
     random.seed(seed)
     if device == 'cuda':
         torch.cuda.manual_seed_all(seed)
-
-    dataset_train = CocoDataset(split = 'train',
-                                root_dir=dataset_config['root_dir'],
-                                dataset_name = dataset_config['dataset_name'],
-                                set_name = dataset_config['train_setname'],
-                                is_zsd = True)
-    dataloader_train = DataLoader(dataset_train,
+    
+    voc = VOCDataset('train',
+                     dataset_name = dataset_config['dataset_name'],
+                     im_dir=dataset_config['im_train_path'],
+                     ann_dir=dataset_config['ann_train_path'],
+                     is_zsd = True)
+    dataloader_train = DataLoader(voc,
                                batch_size=1,
                                shuffle=False,
                                num_workers=4)
@@ -104,20 +104,17 @@ def train(args):
         # break 
         
             # try:
-            im, target, im_path, im_id = data
+            im, target, im_path = data
             im = im.float().to(device)
             target['bboxes'] = target['bboxes'].float().to(device)
             target['labels'] = target['labels'].long().to(device)
 
             tmp = target['bboxes'].clone()
-            zero_width_idx = tmp[:,:,0] - tmp[:,:, 2] == 0
-            if  zero_width_idx.sum() > 0:
-                print(f'Warning. Encounter 0 width gt_boxes at im: {im_path[0].split("/")[-1]}, box: {tmp[zero_width_idx].cpu()[0]}')
-                target['bboxes'] = target['bboxes'][~zero_width_idx].unsqueeze(0)
-            zero_height_idx = tmp[:,:,1] - tmp[:,:, 3] == 0
-            if  zero_height_idx.sum() > 0:
-                print(f'Warning. Encounter 0 height gt_boxes at im: {im_path[0].split("/")[-1]}, box: {tmp[zero_height_idx].cpu()[0]}')
-                target['bboxes'] = target['bboxes'][~zero_height_idx].unsqueeze(0)            
+            zero_idx = tmp[:,:,0] - tmp[:,:, 2] == 0
+            if  zero_idx.sum() > 0:
+                print(f'Warning. Encounter 0 size boxes at im: {im_path[0].split("/")[-1]}, box: {tmp[zero_idx].cpu()[0]}')
+                target['bboxes'] = target['bboxes'][~zero_idx].unsqueeze(0)
+            
             # breakpoint()
             
             optimizer.zero_grad()
@@ -141,7 +138,7 @@ def train(args):
                 or np.isnan(frcnn_output['frcnn_localization_loss'].item()):
                 breakpoint()
 
-            if iter_num % 1000 == 0:
+            if iter_num % 50 == 0:
                 loss_output = 'Epoch {} | Iter {} | '.format(epoch_num, iter_num)
                 loss_output += 'RPN Cls Loss : {:.4f}'.format(np.mean(rpn_classification_losses))
                 loss_output += ' | RPN Reg : {:.4f}'.format(np.mean(rpn_localization_losses))
@@ -168,32 +165,13 @@ def train(args):
         print('Done Training...')
         
         if epoch_num % train_config['eval_every'] == 0 or epoch_num == num_epochs - 1:
-            faster_rcnn_model.eval()
             print('Evaluating...')
-            # ########################
-            # args = EasyDict({'config_path': 'config/dota_trad_resnet.yaml',
-            #                 #  'checkpoint': None,
-            #                 'checkpoint': '/home/qdinh/FasterRCNN-PyTorch/checkpoints/DOTA/frcnn_trad_0.pt'
-            #                 })
-            # with open(args.config_path, 'r') as file:
-            #     try:
-            #         config = yaml.safe_load(file)
-            #     except yaml.YAMLError as exc:
-            #         print(exc)
-            # # print(config)
-            # dataset_config = config['dataset_params']
-            # model_config = config['model_params']
-            # train_config = config['train_params']
-            # faster_rcnn_model = FasterRCNN(model_config, num_classes=dataset_config['num_classes'], semantic_embedding=None)
-            # faster_rcnn_model.load_state_dict(torch.load(args.checkpoint, map_location=device))
-            # faster_rcnn_model.eval()
-            # faster_rcnn_model = faster_rcnn_model.cuda()
-            # ########################
-            dataset_test = CocoDataset(split = 'test',
-                                        root_dir=dataset_config['root_dir'],
-                                        dataset_name = dataset_config['dataset_name'],
-                                        set_name = dataset_config['testseen_setname'],
-                                        is_zsd = True)
+            faster_rcnn_model.eval()
+            dataset_test = VOCDataset('test',
+                            dataset_name = dataset_config['dataset_name'],
+                            im_dir=dataset_config['im_test_seen_path'],
+                            ann_dir=dataset_config['ann_test_seen_path'],
+                            is_zsd = True)
             predict_coco(faster_rcnn_model, dataset_test)
             stats, class_aps = evaluate_coco(dataset_test, draw_PRcurves = False, return_classap=True)    
             write_log(dataset_test = dataset_test, epoch_num = epoch_num, stats_seen = stats, class_aps_seen = class_aps)

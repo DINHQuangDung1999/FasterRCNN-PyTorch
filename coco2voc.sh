@@ -1,3 +1,3 @@
 python ./dataset/coco2VOC/coco2voc.py  \
-                    --ann_file "/home/qdinh/data/PascalVOC/annotations/instances_testseen2007zsd.json" \
-                    --output_dir "/home/qdinh/data/PascalVOC/annotations_VOCstyle/testseen2007zsd"
+                    --ann_file "/home/qdinh/data/DOTA/annotations/instances_train2017unseen.json" \
+                    --output_dir "/home/qdinh/data/DOTA/annotations_VOCstyle/train2017unseen"

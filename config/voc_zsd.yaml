@@ -5,15 +5,17 @@ dataset_params:
   ann_test_seen_path:  '../data/PascalVOC/annotations_VOCstyle/testseen2007zsd'
   im_test_unseen_path:   '../data/PascalVOC/images/testunseen2007zsd'
   ann_test_unseen_path:  '../data/PascalVOC/annotations_VOCstyle/testunseen2007zsd'
-  num_classes : 17
+  num_classes : 21
 
 model_params:
+  style: 'zsd'
   im_channels : 3
   aspect_ratios: [0.5, 1, 2]
   scales: [128, 256, 512]
   min_im_size : 600
   max_im_size : 1000
-  backbone_out_channels : 512
+  backbone: 'resnet101'
+  backbone_out_channels : 1024
   fc_inner_dim : 1024
   rpn_bg_threshold : 0.3
   rpn_fg_threshold : 0.7
@@ -39,5 +41,6 @@ train_params:
   acc_steps : 1 # increase you want to get gradients from >1 steps(kind of mimicking >1 batch size)
   num_epochs: 20
   lr_steps : [12, 16]
-  lr: 0.001
-  ckpt_name: 'frcnn_seen'
+  lr: 0.00001
+  ckpt_name: 'frcnn_zsd'
+  eval_every: 4

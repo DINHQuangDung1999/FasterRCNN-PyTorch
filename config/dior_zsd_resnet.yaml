@@ -1,17 +1,22 @@
 dataset_params:
-  im_train_path: 'data/VOC2007/JPEGImages'
-  ann_train_path: 'data/VOC2007/Annotations'
-  im_test_path: 'data/VOC2007-test/JPEGImages'
-  ann_test_path: 'data/VOC2007-test/Annotations'
+  im_train_path:  '/home/qdinh/data/DIOR/images/trainvalseen'
+  ann_train_path: '/home/qdinh/data/DIOR/annotations_VOCstyle/trainvalseen'
+  im_test_seen_path:   '/home/qdinh/data/DIOR/images/testseen'
+  ann_test_seen_path:  '/home/qdinh/data/DIOR/annotations_VOCstyle/testseen'
+  im_test_unseen_path:   '/home/qdinh/data/DIOR/images/testunseen'
+  ann_test_unseen_path:  '/home/qdinh/data/DIOR/annotations_VOCstyle/testunseen'
+  dataset_name: DIOR
   num_classes : 21
 
 model_params:
+  style: 'zsd'
   im_channels : 3
   aspect_ratios: [0.5, 1, 2]
   scales: [128, 256, 512]
   min_im_size : 600
   max_im_size : 1000
-  backbone_out_channels : 512
+  backbone: 'resnet101'
+  backbone_out_channels : 1024
   fc_inner_dim : 1024
   rpn_bg_threshold : 0.3
   rpn_fg_threshold : 0.7
@@ -32,10 +37,12 @@ model_params:
   roi_pos_fraction : 0.25
 
 train_params:
-  task_name: 'voc'
+  ckpt_path: '/home/qdinh/FasterRCNN-PyTorch/checkpoints/DIOR'
   seed : 1111
   acc_steps : 1 # increase you want to get gradients from >1 steps(kind of mimicking >1 batch size)
   num_epochs: 20
   lr_steps : [12, 16]
-  lr: 0.001
-  ckpt_name: 'faster_rcnn_voc2007.pth'
+  lr: 0.00001
+  # lr: 0.001
+  ckpt_name: 'frcnn_trad'
+  eval_every: 5
