@@ -17,7 +17,7 @@ model_params:
   style: 'trad'
   im_channels : 3
   aspect_ratios: [0.5, 1, 2]
-  scales: [8, 16, 32, 48, 64, 128, 256, 512] # Add more scales to detect small objects
+  scales: [16, 32, 48, 64, 128, 256] # Add more scales to detect small objects
   min_im_size : 600
   max_im_size : 1000
   backbone: 'resnet101'
@@ -30,7 +30,7 @@ model_params:
   rpn_test_prenms_topk : 6000
   rpn_train_topk : 2000
   rpn_test_topk : 300
-  rpn_batch_size : 256
+  rpn_batch_size : 512
   rpn_pos_fraction : 0.5
   roi_iou_threshold : 0.5
   roi_low_bg_iou : 0.1 # increase it to 0.1 for hard negative
@@ -38,7 +38,7 @@ model_params:
   roi_nms_threshold : 0.3
   roi_topk_detections : 100
   roi_score_threshold : 0.05
-  roi_batch_size : 128
+  roi_batch_size : 512
   roi_pos_fraction : 0.25
 
 train_params:

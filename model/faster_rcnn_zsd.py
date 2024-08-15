@@ -527,10 +527,11 @@ class ROIHead(nn.Module):
     and a bbox regression fc layer
     """
     
-    def __init__(self, model_config, num_classes, in_channels, semantic_embedding = None, emb_dim = None):
+    def __init__(self, model_config, num_classes, num_seen_classes, in_channels, semantic_embedding = None, emb_dim = None):
         super(ROIHead, self).__init__()
         # params
         self.num_classes = num_classes
+        self.n_seen = num_seen_classes
         self.roi_batch_size = model_config['roi_batch_size']
         self.roi_pos_count = int(model_config['roi_pos_fraction'] * self.roi_batch_size)
         self.iou_threshold = model_config['roi_iou_threshold']
@@ -547,20 +548,35 @@ class ROIHead(nn.Module):
 
         self.style = model_config['style']
         if self.style == 'zsd':
+
             self.semantic_embedding = semantic_embedding
             normalized_emb = torch.nn.functional.normalize(self.semantic_embedding, p = 2, dim = -1)
-            self.cosine_embedding = normalized_emb @ normalized_emb.T
-            self.cosine_embedding = seSoftmax(self.cosine_embedding)
+            self.embedding_similarity_matrix = normalized_emb[:self.n_seen, :] @ normalized_emb[ self.n_seen:, :].T
+            self.embedding_similarity_matrix = torch.nn.functional.softmax(self.embedding_similarity_matrix, dim = -1)
+            n_unseen = num_classes - num_seen_classes
+            self.embedding_similarity_matrix = torch.cat([self.embedding_similarity_matrix, torch.eye(n_unseen).to(device)])
+
             if emb_dim is None:
-                self.emb_dim = semantic_embedding.shape[1]
+                # self.emb_dim = semantic_embedding.shape[1] 
+                self.emb_dim = 2048
             else:
                 self.emb_dim = emb_dim
+            
+            # Common Space projections for visual features and semantic embeddings
+            self.feat_projection = nn.Linear(self.fc_inner_dim, self.emb_dim, bias = True) #p_v
+            # self.emb_projection = nn.Linear(semantic_embedding.shape[1], self.emb_dim, bias = False) #p_s
+            # self.emb_projection.weight.data.copy_(torch.eye(self.emb_dim, requires_grad=False))
 
-            self.feat_projection = nn.Linear(self.fc_inner_dim, self.emb_dim, bias = True)
-            self.emb_projection = nn.Linear(semantic_embedding.shape[1], self.emb_dim, bias = True)
-            self.emb_projection.weight.data.copy_(torch.eye(self.emb_dim, requires_grad=False))
+            self.emb_projection = nn.Linear(semantic_embedding.shape[1], self.emb_dim, bias = True) #p_s
+            
+            # Region Category Layers
+            self.g_s = nn.Sequential(nn.Linear(self.emb_dim, 1024, bias = True),nn.ReLU(),
+                                     nn.Linear(1024, 1, bias = True), nn.ReLU())
+            self.g_u = nn.Sequential(nn.Linear(self.emb_dim, 1024, bias = True),nn.ReLU(),
+                                     nn.Linear(1024, 1, bias = True), nn.ReLU())
 
-            # self.emb_projection = nn.Linear(semantic_embedding.shape[1], self.emb_dim, bias = True)
+            # Region Region Layers
+            self.h_v = nn.Sequential(nn.Linear(self.emb_dim, 512, bias = True), nn.ReLU())
 
         elif self.style == 'trad':
             self.cls_layer = nn.Linear(self.fc_inner_dim, self.num_classes)
@@ -666,31 +682,73 @@ class ROIHead(nn.Module):
         proposal_roi_pool_feats = proposal_roi_pool_feats.flatten(start_dim=1)
 
         box_fc_6 = torch.nn.functional.relu(self.fc6(proposal_roi_pool_feats))
-        box_fc_7 = torch.nn.functional.relu(self.fc7(box_fc_6))
+        box_fc_7 = torch.nn.functional.relu(self.fc7(box_fc_6)) 
+        ''' This is the region proposal features'''
 
+        breakpoint()
         #########
         if self.style == 'zsd':
-            projected_visual_feats = self.feat_projection(box_fc_7)
-            projected_emb_feats = self.emb_projection(self.semantic_embedding.float())
-            normed_projected_visual_feats = torch.nn.functional.normalize(projected_visual_feats, dim = -1)
-            normed_projected_emb_feats = torch.nn.functional.normalize(projected_emb_feats, dim = -1)
-            cls_scores = normed_projected_visual_feats @ normed_projected_emb_feats.T
+            # projected_visual_feats = torch.nn.functional.relu(self.feat_projection(box_fc_7)) # p_v
+            # projected_emb_feats = torch.nn.functional.relu(self.emb_projection(self.semantic_embedding.float())) #p_s
+            # normed_projected_visual_feats = torch.nn.functional.normalize(projected_visual_feats, dim = -1)
+            # normed_projected_emb_feats = torch.nn.functional.normalize(projected_emb_feats, dim = -1)
+            # cls_scores = normed_projected_visual_feats @ normed_projected_emb_feats.T
+            projected_visual_feats = torch.nn.functional.relu(self.feat_projection(box_fc_7)) # p_v
+            projected_emb_feats = torch.nn.functional.relu(self.emb_projection(self.semantic_embedding.float())) #p_s
+            
+            bs = projected_visual_feats.shape[0]
+            fea_s = projected_visual_feats.unsqueeze(1).repeat(1, self.n_seen, 1)
+            A_s = projected_emb_feats[:self.n_seen,:].unsqueeze(0).repeat(bs, 1, 1)
+            O_s = self.g_s(fea_s * A_s) # #Shape bs, 17, emb_dim => shape bs, 17, 1 => unsqueeze(-1)
+
+            n_unseen =self.num_classes - self.n_seen 
+            fea_u = projected_visual_feats.unsqueeze(1).repeat(1, n_unseen, 1)
+            A_u = projected_emb_feats[self.n_seen:, :].unsqueeze(0).repeat(bs, 1, 1)
+            O_u = self.g_u.forward(fea_u * A_u) # #Shape bs, 4, emb_dim => shape bs, 4, 1 => unsqueeze(-1)
+
+            Z = self.h_v(projected_visual_feats)
+            # seen_scores, unseen_scores = self.region_classification_layer(projected_visual_feats, projected_emb_feats)
+
 
         elif self.style == 'trad':
             # cls_scores -> (proposals, num_classes)
             cls_scores = self.cls_layer(box_fc_7)
-
+        breakpoint()
         box_transform_pred = self.bbox_reg_layer(box_fc_7)
         # box_transform_pred -> (proposals, num_classes * 4)
         
-        num_boxes, num_classes = cls_scores.shape
-        box_transform_pred = box_transform_pred.reshape(num_boxes, num_classes, 4)
+        # Calculate loss
+        # num_boxes, num_classes = cls_scores.shape
+        box_transform_pred = box_transform_pred.reshape(box_transform_pred.shape[0], self.num_classes, 4)
         frcnn_output = {}
         if self.training and target is not None:
-            classification_loss = torch.nn.functional.cross_entropy(cls_scores, labels) 
             if self.style == 'zsd':
-                trip_loss = TripletLoss(self.cosine_embedding, projected_visual_feats)
-                classification_loss += trip_loss
+                loss_cls_s = torch.nn.functional.cross_entropy(O_s.squeeze(-1), labels)
+                similarity = self.embedding_similarity_matrix[labels]
+                bce = -(similarity * torch.log(O_u.squeeze(-1)+1e-5) + (1 - similarity) * torch.log(1 - O_u.squeeze(-1)+1e-5))
+                unseen_loss = torch.sum(bce)
+                loss_cls_u = BinaryCrossEntropyLoss(O_u, self.embedding_similarity_matrix)
+                region_contrastive_loss = []
+                for i in range(len(labels)):
+                    region_feat = Z[i]
+                    proposal_label = labels[i]
+                    positive_proposals_idx = labels == proposal_label
+                    positive_proposals_feat = Z[positive_proposals_idx]
+                    negative_proposals_idx = labels != proposal_label
+                    negative_proposals_feat = Z[negative_proposals_idx]
+
+                    pos = region_feat.repeat(len(positive_proposals_idx))
+                    pos = torch.exp((pos * positive_proposals_feat)/tau)
+                    neg = region_feat.repeat(len(negative_proposals_idx))
+                    neg = torch.exp((neg * positive_proposals_feat)/tau)
+                    def proposal_features_contrastive_loss(feat1, feat2, tau):
+                        numerator = torch.exp((feat1@feat2.T)/tau)
+                        denom1 = 0
+                    
+                # trip_loss = TripletLoss(self.cosine_embedding, projected_visual_feats)
+                # classification_loss += trip_loss
+            else:
+                classification_loss = torch.nn.functional.cross_entropy(cls_scores, labels) 
             # Compute localization loss only for non-background labelled proposals
             fg_proposals_idxs = torch.where(labels > 0)[0]
             # Get class labels for these positive proposals
@@ -699,9 +757,7 @@ class ROIHead(nn.Module):
 
             if torch.isnan(torch.sum(regression_targets)):
                 breakpoint()
-            #     regression_targets = regression_targets[~torch.isnan(torch.sum(regression_targets, dim = 1))]
-            #     box_transform_pred = box_transform_pred[~torch.isnan(torch.sum(regression_targets, dim = 1))]
-            #     breakpoint()
+
 
             localization_loss = torch.nn.functional.smooth_l1_loss(
                 box_transform_pred[fg_proposals_idxs, fg_cls_labels],
@@ -710,13 +766,8 @@ class ROIHead(nn.Module):
                 reduction="sum",
             )
 
-            # localization_loss = torch.nn.functional.smooth_l1_loss(box_transform_pred[fg_proposals_idxs, fg_cls_labels],regression_targets[fg_proposals_idxs],beta=1/9,reduction="sum",)
             localization_loss = localization_loss / labels.numel()
-
-            # if torch.isnan(localization_loss) == True:
-            #     # print(labels.numel())
-            #     breakpoint()
-                
+               
             frcnn_output['frcnn_classification_loss'] = classification_loss
             frcnn_output['frcnn_localization_loss'] = localization_loss
         
@@ -794,7 +845,7 @@ class ROIHead(nn.Module):
 
 
 class FasterRCNN(nn.Module):
-    def __init__(self, model_config, num_classes, semantic_embedding = None):
+    def __init__(self, model_config, num_classes, num_seen_classes, semantic_embedding = None):
         super(FasterRCNN, self).__init__()
         self.model_config = model_config
         if model_config['backbone'] == 'vgg16':
@@ -807,7 +858,7 @@ class FasterRCNN(nn.Module):
             # print('Backbone freezed')      
             # breakpoint()
         elif model_config['backbone'] == 'resnet101':
-            resnet = torchvision.models.resnet101(weights='IMAGENET1K_V1')
+            resnet = torchvision.models.resnet101(weights='IMAGENET1K_V1', norm_layer=torchvision.ops.FrozenBatchNorm2d)
             resnet_layers = []
             for name, layer in resnet.named_children():
                 resnet_layers.append(layer)
@@ -824,7 +875,7 @@ class FasterRCNN(nn.Module):
                                          scales=model_config['scales'],
                                          aspect_ratios=model_config['aspect_ratios'],
                                          model_config=model_config)
-        self.roi_head = ROIHead(model_config, num_classes, 
+        self.roi_head = ROIHead(model_config, num_classes, num_seen_classes,
                                 in_channels=model_config['backbone_out_channels'], 
                                 semantic_embedding = semantic_embedding)
 
@@ -906,7 +957,7 @@ class FasterRCNN(nn.Module):
         # Call RPN and get proposals
         rpn_output = self.rpn(image, feat, target)
         proposals = rpn_output['proposals']
-        
+        # breakpoint()
         # zero_target = (target['bboxes'][:,:,0] - target['bboxes'][:,:,2] == 0)
         # if target['bboxes'][zero_target].shape[0] > 0:
         #     print('Warning')
@@ -923,8 +974,6 @@ class FasterRCNN(nn.Module):
         #     print('breakpoint')
         #     breakpoint()
         return rpn_output, frcnn_output
-
-
 
 def seSoftmax(tensor):
     '''

@@ -28,9 +28,9 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # len(os.listdir(f'/home/qdinh/data/DIOR/annotations_VOC/testseen'))
 
 def train(args):
-    args = EasyDict({'config_path': 'config/dota_trad_resnet.yaml',
-                    #  'checkpoint': None,
-                     'checkpoint': '/home/qdinh/FasterRCNN-PyTorch/checkpoints/DOTA/frcnn_trad_0.pt'
+    args = EasyDict({'config_path': 'config/dior_zsd_resnet.yaml',
+                     'checkpoint': None,
+                    #  'checkpoint': '/home/qdinh/FasterRCNN-PyTorch/checkpoints/DIOR/frcnn_trad_11.pt'
                      })
     # Read the config file #
     with open(args.config_path, 'r') as file:
@@ -66,7 +66,10 @@ def train(args):
     elif model_config['style'] == 'trad':
         semantic_embedding = None
     
-    faster_rcnn_model = FasterRCNN(model_config, num_classes=dataset_config['num_classes'], semantic_embedding=semantic_embedding)
+    faster_rcnn_model = FasterRCNN(model_config, 
+                                   num_classes=dataset_config['num_classes'],
+                                   num_seen_classes=dataset_config['num_seen_classes'], 
+                                   semantic_embedding=semantic_embedding)
     faster_rcnn_model.train()
     faster_rcnn_model.to(device)
 
@@ -96,6 +99,7 @@ def train(args):
         frcnn_localization_losses = []
         
         for iter_num, data in enumerate(tqdm(dataloader_train)):
+            # break
             # print(data[2])
             # if iter_num < 830: #'/home/qdinh/data/DIOR/images/trainvalseen/08325.jpg'
             #     continue
@@ -163,7 +167,7 @@ def train(args):
         scheduler.step()
         print('Finished epoch {}'.format(epoch_num))
         os.makedirs(train_config['ckpt_path'], exist_ok=True)
-        checkpoint_dir = os.path.join(train_config['ckpt_path'], train_config['ckpt_name'] + f'_{epoch_num}.pt')
+        checkpoint_dir = os.path.join(train_config['ckpt_path'], train_config['ckpt_name'] + f'_{epoch_num}_15-8.pt')
         torch.save(faster_rcnn_model.state_dict(), checkpoint_dir)
         print('Done Training...')
         
@@ -194,6 +198,7 @@ def train(args):
                                         dataset_name = dataset_config['dataset_name'],
                                         set_name = dataset_config['testseen_setname'],
                                         is_zsd = True)
+            # faster_rcnn_model.low_score_threshold = 0.05
             predict_coco(faster_rcnn_model, dataset_test)
             stats, class_aps = evaluate_coco(dataset_test, draw_PRcurves = False, return_classap=True)    
             write_log(dataset_test = dataset_test, epoch_num = epoch_num, stats_seen = stats, class_aps_seen = class_aps)

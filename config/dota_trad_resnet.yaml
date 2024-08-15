@@ -16,11 +16,11 @@ model_params:
   style: 'trad'
   im_channels : 3
   aspect_ratios: [0.5, 1, 2]
-  scales: [8, 16, 32, 48, 64, 128, 256, 512] # Add more scales to detect small objects
+  scales: [16, 32, 48, 64, 128, 256] # Add more scales to detect small objects
   min_im_size : 600
   max_im_size : 1000
-  backbone: 'resnet101'
-  backbone_out_channels : 1024
+  backbone: 'vgg16'
+  backbone_out_channels : 512
   fc_inner_dim : 1024
   rpn_bg_threshold : 0.3
   rpn_fg_threshold : 0.7
@@ -29,7 +29,7 @@ model_params:
   rpn_test_prenms_topk : 6000
   rpn_train_topk : 2000
   rpn_test_topk : 300
-  rpn_batch_size : 256
+  rpn_batch_size : 512
   rpn_pos_fraction : 0.5
   roi_iou_threshold : 0.5
   roi_low_bg_iou : 0.1 # increase it to 0.1 for hard negative
@@ -37,7 +37,7 @@ model_params:
   roi_nms_threshold : 0.3
   roi_topk_detections : 100
   roi_score_threshold : 0.05
-  roi_batch_size : 128
+  roi_batch_size : 512
   roi_pos_fraction : 0.25
 
 train_params:
@@ -45,7 +45,7 @@ train_params:
   seed : 1111
   acc_steps : 1 # increase you want to get gradients from >1 steps(kind of mimicking >1 batch size)
   num_epochs: 10
-  lr_steps : [12, 16]
+  lr_steps : [4, 8, 12, 16]
   lr: 0.00001
   # lr: 0.001
   ckpt_name: 'frcnn_trad'

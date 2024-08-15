@@ -11,9 +11,8 @@ from easydict import EasyDict
 from tqdm import tqdm
 from model.faster_rcnn import FasterRCNN
 from dataset.coco import CocoDataset
-
-
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 def load_model_and_dataset(args):
     # Read the config file #
 
@@ -47,13 +46,14 @@ def load_model_and_dataset(args):
     detector.eval()
     detector.to(device)
     detector.load_state_dict(torch.load(os.path.join(train_config['ckpt_path'],args['ckpt']),map_location=device))
+    x = torch.load(os.path.join(train_config['ckpt_path'],args['ckpt']),map_location=device)
     return detector, dataset_test
 
 args = EasyDict({'config_path':'config/dior_trad_resnet.yaml',
-                    'ckpt': 'frcnn_trad_0.pt'})
+                    'ckpt': 'frcnn_trad_11.pt'})
 detector, dataset_test = load_model_and_dataset(args)
 
-def infer(detector, dataset_test, low_score_threshold = 0.5, put_gt_label = False):
+def infer(detector, dataset_test, low_score_threshold = 0.3, put_gt_label = False):
     if os.path.exists(f'./dump/{dataset_test.dataset_name}'):
         shutil.rmtree(f'./dump/{dataset_test.dataset_name}')
     os.makedirs(f'./dump/{dataset_test.dataset_name}', exist_ok=True)
