@@ -45,11 +45,9 @@ class CocoDataset(Dataset):
             elif self.dataset_name == 'PascalVOC':
                 self.seen_ids = [0,1,2,3,4,5,6,8,9,10,11,13,14,15,16,17,20]
                 self.unseen_ids = [7,12,18,19] # car, dog, sofa, train
-            elif self.dataset_name == 'MSCOCO':
-                self.seen_ids = [0, 1, 2, 3, 4, 6, 8, 9, 10, 11, 13, 15, 16, 18, 19, 20, 21, 22, 24, 25, 27, 28, 
-                                 31, 32, 35, 37, 38, 39, 40, 41, 42, 43, 44, 46, 47, 49, 50, 51, 52, 53, 55, 56, 
-                                 57, 59, 60, 61, 62, 63, 64, 65, 67, 72, 73, 75, 76, 77, 78, 79, 81, 82, 84, 85, 86, 87, 88, 90]
-                self.unseen_ids = [5, 7, 14, 17, 23, 33, 34, 36, 48, 54, 58, 70, 74, 80, 89]
+            elif self.dataset_name == 'xView':
+                self.seen_ids = [0, 1, 2, 3, 5, 6, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 26, 27, 29, 30, 31, 32, 33, 34, 35, 36, 38, 40, 41, 43, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 58, 59, 60]
+                self.unseen_ids = [4, 7, 8, 12, 24, 25, 28, 37, 39, 42, 44, 57]                
             elif self.dataset_name == 'DIOR':
                 self.seen_ids = [0,1,3,5,6,7,8,9,10,12,13,14,15,16,17,18,19]
                 self.unseen_ids = [2,4,11,20] # airport, basketballcourt, groundtrackfield, windmill
@@ -89,10 +87,8 @@ class CocoDataset(Dataset):
         return len(self.image_ids)
 
     def __getitem__(self, idx):
-
         image_info = self.coco.loadImgs(self.image_ids[idx])[0]
         path       = os.path.join(self.root_dir, self.dataset_name, 'images', self.set_name, image_info['file_name'])
-        # breakpoint()
         im = Image.open(path)
         to_flip = False
         if self.split == 'train' and random.random() < 0.5:

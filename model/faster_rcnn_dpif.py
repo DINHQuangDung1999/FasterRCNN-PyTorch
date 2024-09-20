@@ -2,7 +2,8 @@ import torch
 import torch.nn as nn
 import torchvision
 import math
-
+import numpy as np 
+import torch.nn.functional as F
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
@@ -42,7 +43,7 @@ def boxes_to_transformation_targets(ground_truth_boxes, anchors_or_proposals):
     :return: regression_targets: (anchors_or_proposals_in_image, 4) transformation targets tx,ty,tw,th
         for all anchors/proposal boxes
     """
-    # ground_truth_boxes, anchors_or_proposals = matched_gt_boxes_for_proposals.clone(), proposals.clone()
+    
     # Get center_x,center_y,w,h from x1,y1,x2,y2 for anchors
     widths = anchors_or_proposals[:, 2] - anchors_or_proposals[:, 0]
     heights = anchors_or_proposals[:, 3] - anchors_or_proposals[:, 1]
@@ -60,12 +61,6 @@ def boxes_to_transformation_targets(ground_truth_boxes, anchors_or_proposals):
     targets_dw = torch.log(gt_widths / widths)
     targets_dh = torch.log(gt_heights / heights)
     regression_targets = torch.stack((targets_dx, targets_dy, targets_dw, targets_dh), dim=1)
-
-    # if torch.isnan(torch.sum(regression_targets)):
-    #     breakpoint()
-    #     regression_targets = regression_targets[~torch.isnan(torch.sum(regression_targets, dim = 1))]
-    #     breakpoint()
-
     return regression_targets
 
 
@@ -439,6 +434,7 @@ class RegionProposalNetwork(nn.Module):
         :param target:
         :return:
         """
+        # breakpoint()
         # Call RPN layers
         rpn_feat = nn.ReLU()(self.rpn_conv(feat))
         cls_scores = self.cls_layer(rpn_feat)
@@ -527,11 +523,15 @@ class ROIHead(nn.Module):
     and a bbox regression fc layer
     """
     
-    def __init__(self, model_config, num_classes, num_seen_classes, in_channels, semantic_embedding = None, emb_dim = None):
+    def __init__(self, model_config, seen_classes, unseen_classes, semantic_embeddings, cls2asso):
         super(ROIHead, self).__init__()
-        # params
-        self.num_classes = num_classes
-        self.n_seen = num_seen_classes
+        
+        self.seen_classes = seen_classes
+        self.unseen_classes = unseen_classes
+        self.semantic_embeddings = semantic_embeddings
+        self.cls2asso = cls2asso 
+
+        self.in_channels = model_config['backbone_out_channels']
         self.roi_batch_size = model_config['roi_batch_size']
         self.roi_pos_count = int(model_config['roi_pos_fraction'] * self.roi_batch_size)
         self.iou_threshold = model_config['roi_iou_threshold']
@@ -542,48 +542,19 @@ class ROIHead(nn.Module):
         self.pool_size = model_config['roi_pool_size']
         self.fc_inner_dim = model_config['fc_inner_dim']
 
-        #layers
-        self.fc6 = nn.Linear(in_channels * self.pool_size * self.pool_size, self.fc_inner_dim)
-        self.fc7 = nn.Linear(self.fc_inner_dim, self.fc_inner_dim)
+        # self.fc6 = nn.Linear(self.in_channels * self.pool_size * self.pool_size, self.fc_inner_dim) # context top
+        # self.fc7 = nn.Linear(self.fc_inner_dim, self.fc_inner_dim) # context top 
+        # self.cls_layer = nn.Linear(self.fc_inner_dim, self.num_classes)
+        self.fc6 = nn.Linear(self.in_channels * self.pool_size * self.pool_size, self.fc_inner_dim) # context top
+        self.fc7 = nn.Linear(self.fc_inner_dim, self.fc_inner_dim) # context top 
+        context_top = nn.Sequential(self.fc6, nn.ReLU(), self.fc7, nn.ReLU())
+        from copy import deepcopy
+        self.cls_layer = ZSD_block(deepcopy(context_top), semantic_embeddings, seen_classes, unseen_classes, cls2asso)
+        self.bbox_reg_layer = nn.Linear(self.fc_inner_dim, len(seen_classes) * 4) # not class agnostic
+        
+        # torch.nn.init.normal_(self.cls_layer.weight, std=0.01)
+        # torch.nn.init.constant_(self.cls_layer.bias, 0)
 
-        self.style = model_config['style']
-        if self.style == 'zsd':
-
-            self.semantic_embedding = semantic_embedding
-            normalized_emb = torch.nn.functional.normalize(self.semantic_embedding, p = 2, dim = -1)
-            self.embedding_similarity_matrix = normalized_emb[:self.n_seen, :] @ normalized_emb[ self.n_seen:, :].T
-            self.embedding_similarity_matrix = torch.nn.functional.softmax(self.embedding_similarity_matrix, dim = -1)
-            n_unseen = num_classes - num_seen_classes
-            self.embedding_similarity_matrix = torch.cat([self.embedding_similarity_matrix, torch.eye(n_unseen).to(device)])
-
-            if emb_dim is None:
-                # self.emb_dim = semantic_embedding.shape[1] 
-                self.emb_dim = 2048
-            else:
-                self.emb_dim = emb_dim
-            
-            # Common Space projections for visual features and semantic embeddings
-            self.feat_projection = nn.Linear(self.fc_inner_dim, self.emb_dim, bias = True) #p_v
-            # self.emb_projection = nn.Linear(semantic_embedding.shape[1], self.emb_dim, bias = False) #p_s
-            # self.emb_projection.weight.data.copy_(torch.eye(self.emb_dim, requires_grad=False))
-
-            self.emb_projection = nn.Linear(semantic_embedding.shape[1], self.emb_dim, bias = True) #p_s
-            
-            # Region Category Layers
-            self.g_s = nn.Sequential(nn.Linear(self.emb_dim, 1024, bias = True),nn.ReLU(),
-                                     nn.Linear(1024, 1, bias = True), nn.ReLU())
-            self.g_u = nn.Sequential(nn.Linear(self.emb_dim, 1024, bias = True),nn.ReLU(),
-                                     nn.Linear(1024, 1, bias = True), nn.ReLU())
-
-            # Region Region Layers
-            self.h_v = nn.Sequential(nn.Linear(self.emb_dim, 512, bias = True), nn.ReLU())
-
-        elif self.style == 'trad':
-            self.cls_layer = nn.Linear(self.fc_inner_dim, self.num_classes)
-            torch.nn.init.normal_(self.cls_layer.weight, std=0.01)
-            torch.nn.init.constant_(self.cls_layer.bias, 0)
-       
-        self.bbox_reg_layer = nn.Linear(self.fc_inner_dim, self.num_classes * 4)
         torch.nn.init.normal_(self.bbox_reg_layer.weight, std=0.001)
         torch.nn.init.constant_(self.bbox_reg_layer.bias, 0)
     
@@ -626,7 +597,7 @@ class ROIHead(nn.Module):
         
         return labels, matched_gt_boxes_for_proposals
     
-    def forward(self, feat, proposals, image_shape, target):
+    def forward(self, feat, proposals, image_shape, target, pred_style = 'trad'):
         r"""
         Main method for ROI head that does the following:
         1. If training assign target boxes and labels to all proposals
@@ -680,101 +651,51 @@ class ROIHead(nn.Module):
                                                            output_size=self.pool_size,
                                                            spatial_scale=possible_scales[0])
         proposal_roi_pool_feats = proposal_roi_pool_feats.flatten(start_dim=1)
-
         box_fc_6 = torch.nn.functional.relu(self.fc6(proposal_roi_pool_feats))
-        box_fc_7 = torch.nn.functional.relu(self.fc7(box_fc_6)) 
-        ''' This is the region proposal features'''
-
-        breakpoint()
-        #########
-        if self.style == 'zsd':
-            # projected_visual_feats = torch.nn.functional.relu(self.feat_projection(box_fc_7)) # p_v
-            # projected_emb_feats = torch.nn.functional.relu(self.emb_projection(self.semantic_embedding.float())) #p_s
-            # normed_projected_visual_feats = torch.nn.functional.normalize(projected_visual_feats, dim = -1)
-            # normed_projected_emb_feats = torch.nn.functional.normalize(projected_emb_feats, dim = -1)
-            # cls_scores = normed_projected_visual_feats @ normed_projected_emb_feats.T
-            projected_visual_feats = torch.nn.functional.relu(self.feat_projection(box_fc_7)) # p_v
-            projected_emb_feats = torch.nn.functional.relu(self.emb_projection(self.semantic_embedding.float())) #p_s
-            
-            bs = projected_visual_feats.shape[0]
-            fea_s = projected_visual_feats.unsqueeze(1).repeat(1, self.n_seen, 1)
-            A_s = projected_emb_feats[:self.n_seen,:].unsqueeze(0).repeat(bs, 1, 1)
-            O_s = self.g_s(fea_s * A_s) # #Shape bs, 17, emb_dim => shape bs, 17, 1 => unsqueeze(-1)
-
-            n_unseen =self.num_classes - self.n_seen 
-            fea_u = projected_visual_feats.unsqueeze(1).repeat(1, n_unseen, 1)
-            A_u = projected_emb_feats[self.n_seen:, :].unsqueeze(0).repeat(bs, 1, 1)
-            O_u = self.g_u.forward(fea_u * A_u) # #Shape bs, 4, emb_dim => shape bs, 4, 1 => unsqueeze(-1)
-
-            Z = self.h_v(projected_visual_feats)
-            # seen_scores, unseen_scores = self.region_classification_layer(projected_visual_feats, projected_emb_feats)
-
-
-        elif self.style == 'trad':
-            # cls_scores -> (proposals, num_classes)
-            cls_scores = self.cls_layer(box_fc_7)
-        breakpoint()
-        box_transform_pred = self.bbox_reg_layer(box_fc_7)
+        pooled_feats = torch.nn.functional.relu(self.fc7(box_fc_6))
+        # cls_scores = self.cls_layer(box_fc_7)
+        # box_transform_pred = self.bbox_reg_layer(box_fc_7)
+        # pooled_feats = self.context_top(proposal_roi_pool_feats)
+        box_transform_pred = self.bbox_reg_layer(pooled_feats)
+        # breakpoint()
+        if target is not None:
+            cls_scores, asso_scores, association_loss = self.cls_layer(pooled_feats, proposal_roi_pool_feats, labels)
+        else:
+            cls_scores, asso_scores, association_loss = self.cls_layer(pooled_feats, proposal_roi_pool_feats)
+        # breakpoint()
+        # cls_scores -> (proposals, num_classes)
         # box_transform_pred -> (proposals, num_classes * 4)
+        ##############################################
         
-        # Calculate loss
         # num_boxes, num_classes = cls_scores.shape
-        box_transform_pred = box_transform_pred.reshape(box_transform_pred.shape[0], self.num_classes, 4)
+        box_transform_pred = box_transform_pred.reshape(-1, len(self.seen_classes), 4)
         frcnn_output = {}
         if self.training and target is not None:
-            if self.style == 'zsd':
-                loss_cls_s = torch.nn.functional.cross_entropy(O_s.squeeze(-1), labels)
-                similarity = self.embedding_similarity_matrix[labels]
-                bce = -(similarity * torch.log(O_u.squeeze(-1)+1e-5) + (1 - similarity) * torch.log(1 - O_u.squeeze(-1)+1e-5))
-                unseen_loss = torch.sum(bce)
-                loss_cls_u = BinaryCrossEntropyLoss(O_u, self.embedding_similarity_matrix)
-                region_contrastive_loss = []
-                for i in range(len(labels)):
-                    region_feat = Z[i]
-                    proposal_label = labels[i]
-                    positive_proposals_idx = labels == proposal_label
-                    positive_proposals_feat = Z[positive_proposals_idx]
-                    negative_proposals_idx = labels != proposal_label
-                    negative_proposals_feat = Z[negative_proposals_idx]
-
-                    pos = region_feat.repeat(len(positive_proposals_idx))
-                    pos = torch.exp((pos * positive_proposals_feat)/tau)
-                    neg = region_feat.repeat(len(negative_proposals_idx))
-                    neg = torch.exp((neg * positive_proposals_feat)/tau)
-                    def proposal_features_contrastive_loss(feat1, feat2, tau):
-                        numerator = torch.exp((feat1@feat2.T)/tau)
-                        denom1 = 0
-                    
-                # trip_loss = TripletLoss(self.cosine_embedding, projected_visual_feats)
-                # classification_loss += trip_loss
-            else:
-                classification_loss = torch.nn.functional.cross_entropy(cls_scores, labels) 
+            classification_loss = torch.nn.functional.cross_entropy(cls_scores, labels)
             # Compute localization loss only for non-background labelled proposals
             fg_proposals_idxs = torch.where(labels > 0)[0]
             # Get class labels for these positive proposals
             fg_cls_labels = labels[fg_proposals_idxs]
             
-
-            if torch.isnan(torch.sum(regression_targets)):
-                breakpoint()
-
-
             localization_loss = torch.nn.functional.smooth_l1_loss(
                 box_transform_pred[fg_proposals_idxs, fg_cls_labels],
                 regression_targets[fg_proposals_idxs],
                 beta=1/9,
                 reduction="sum",
             )
-
             localization_loss = localization_loss / labels.numel()
-               
             frcnn_output['frcnn_classification_loss'] = classification_loss
+            frcnn_output['frcnn_association_loss'] = association_loss
             frcnn_output['frcnn_localization_loss'] = localization_loss
-        
-        if self.training:
+
             return frcnn_output
         else:
-            device = cls_scores.device
+            breakpoint()
+            asso_prob = torch.sigmoid(asso_scores).float()
+            id2asso_dist = torch.transpose(self.cls_layer.id2asso_dist, 0, 1).float()
+            asso_prob = torch.mm(asso_prob, id2asso_dist)
+            cls_prob = F.softmax(cls_scores, 1)
+
             # Apply transformation predictions to proposals
             pred_boxes = apply_regression_pred_to_anchors_or_proposals(box_transform_pred, proposals)
             pred_scores = torch.nn.functional.softmax(cls_scores, dim=-1)
@@ -783,22 +704,84 @@ class ROIHead(nn.Module):
             pred_boxes = clamp_boxes_to_image_boundary(pred_boxes, image_shape)
             
             # create labels for each prediction
-            pred_labels = torch.arange(num_classes, device=device)
+            pred_labels = torch.arange(len(self.seen_classes, self.unseen_classes), device=cls_scores.device)
             pred_labels = pred_labels.view(1, -1).expand_as(pred_scores)
             
             # remove predictions with the background label
-            pred_boxes = pred_boxes[:, 1:]
-            pred_scores = pred_scores[:, 1:]
-            pred_labels = pred_labels[:, 1:]
+            pred_boxes = pred_boxes[:, 1:] # pred_boxes -> (number_proposals, num_classes-1, 4)
+            pred_scores = pred_scores[:, 1:] # pred_scores -> (number_proposals, num_classes-1)
+            pred_labels = pred_labels[:, 1:] # pred_labels -> (number_proposals, num_classes-1)
             
-            # pred_boxes -> (number_proposals, num_classes-1, 4)
-            # pred_scores -> (number_proposals, num_classes-1)
-            # pred_labels -> (number_proposals, num_classes-1)
+            # if pred_style == 'trad':
+            #     pass
+                # # Apply transformation predictions to proposals
+                # pred_boxes = apply_regression_pred_to_anchors_or_proposals(box_transform_pred, proposals)
+                # pred_scores = torch.nn.functional.softmax(cls_scores, dim=-1)
+                
+                # # Clamp box to image boundary
+                # pred_boxes = clamp_boxes_to_image_boundary(pred_boxes, image_shape)
+                
+                # # create labels for each prediction
+                # pred_labels = torch.arange(num_classes, device=cls_scores.device)
+                # pred_labels = pred_labels.view(1, -1).expand_as(pred_scores)
+                
+                # # remove predictions with the background label
+                # pred_boxes = pred_boxes[:, 1:] # pred_boxes -> (number_proposals, num_classes-1, 4)
+                # pred_scores = pred_scores[:, 1:] # pred_scores -> (number_proposals, num_classes-1)
+                # pred_labels = pred_labels[:, 1:] # pred_labels -> (number_proposals, num_classes-1)
+                
+            # elif pred_style == 'zsd' or pred_style == 'gzsd':
+            #     cls_prob = torch.cat([cls_prob[:, 0:1], cls_prob[:, -len(self.unseen_classes):]], dim=-1)
+            #     asso_prob = torch.cat([asso_prob[:, 0:1], asso_prob[:, -len(self.unseen_classes):]], dim=-1)
             
-            # batch everything, by making every class prediction be a separate instance
-            pred_boxes = pred_boxes.reshape(-1, 4)
-            pred_scores = pred_scores.reshape(-1)
-            pred_labels = pred_labels.reshape(-1)
+            #     # in case some seen classes have no concept association to the unseen targets
+            #     if self.cls_layer.no_relation_cls != [] and pred_style == "gzsd":
+            #         for i, c in self.cls_layer.no_relation_cls:
+            #             asso_prob[:, i] = 1
+            #     pred_scores = pred_scores * asso_prob
+            #     breakpoint()
+            #     cls_prob = cls_prob.view(batch_size, rois.size(1), -1)
+            #     bbox_pred = bbox_pred.view(batch_size, rois.size(1), -1)
+                
+            #     # create labels for each prediction
+            #     pred_labels = torch.arange(num_classes, device=device)
+            #     pred_labels = pred_labels.view(1, -1).expand_as(pred_scores)
+                
+            #     # remove predictions with the background label
+            #     pred_boxes = pred_boxes[:, 1:]
+            #     pred_scores = pred_scores[:, 1:]
+            #     pred_labels = pred_labels[:, 1:]
+                
+            #     # pred_boxes -> (number_proposals, num_classes-1, 4)
+            #     # pred_scores -> (number_proposals, num_classes-1)
+            #     # pred_labels -> (number_proposals, num_classes-1)
+                                
+            # else:
+            #     raise ValueError("Unsupported pred_style. Must be 'trad', 'zsd' or 'gzsd'.")
+
+            # select box with max scores 
+            scores_max, scores_argmax = torch.max(pred_scores, dim = 1)
+
+            # scores 
+            pred_scores = scores_max.clone()
+
+            # boxes
+            box_idx = scores_argmax.unsqueeze(1).unsqueeze(1)
+            box_idx = box_idx.repeat(1, 1, 4)
+            pred_boxes = torch.gather(pred_boxes, 1, box_idx)
+            pred_boxes = pred_boxes.squeeze(1)
+            # breakpoint()
+
+            # labels 
+            label_idx = scores_argmax.unsqueeze(1)
+            pred_labels = torch.gather(pred_labels, 1, label_idx)
+            pred_labels = pred_labels.squeeze(1)
+            # breakpoint()
+
+            # # Uncomment to batch everything, by making every class prediction be a separate instance
+            # pred_boxes = pred_boxes.reshape(-1, 4)
+            # pred_scores = pred_scores.reshape(-1)
+            # pred_labels = pred_labels.reshape(-1)
             
             pred_boxes, pred_labels, pred_scores = self.filter_predictions(pred_boxes, pred_labels, pred_scores)
             frcnn_output['boxes'] = pred_boxes
@@ -818,12 +801,13 @@ class ROIHead(nn.Module):
         :param pred_scores:
         :return:
         """
+        # breakpoint()
         # remove low scoring boxes
         keep = torch.where(pred_scores > self.low_score_threshold)[0]
         pred_boxes, pred_scores, pred_labels = pred_boxes[keep], pred_scores[keep], pred_labels[keep]
         
         # Remove small boxes
-        min_size = 16
+        min_size = 8
         ws, hs = pred_boxes[:, 2] - pred_boxes[:, 0], pred_boxes[:, 3] - pred_boxes[:, 1]
         keep = (ws >= min_size) & (hs >= min_size)
         keep = torch.where(keep)[0]
@@ -837,6 +821,11 @@ class ROIHead(nn.Module):
                                                           pred_scores[curr_indices],
                                                           self.nms_threshold)
             keep_mask[curr_indices[curr_keep_indices]] = True
+        # # Global nms 
+        # keep_mask = torch.zeros_like(pred_scores, dtype=torch.bool)
+        # curr_keep_indices = torch.ops.torchvision.nms(pred_boxes,pred_scores,self.nms_threshold)
+        # keep_mask[curr_keep_indices] = True
+        # # breakpoint()
         keep_indices = torch.where(keep_mask)[0]
         post_nms_keep_indices = keep_indices[pred_scores[keep_indices].sort(descending=True)[1]]
         keep = post_nms_keep_indices[:self.topK_detections]
@@ -845,7 +834,7 @@ class ROIHead(nn.Module):
 
 
 class FasterRCNN(nn.Module):
-    def __init__(self, model_config, num_classes, num_seen_classes, semantic_embedding = None):
+    def __init__(self, model_config, semantic_embeddings, seen_classes, unseen_classes, cls2asso):
         super(FasterRCNN, self).__init__()
         self.model_config = model_config
         if model_config['backbone'] == 'vgg16':
@@ -864,39 +853,22 @@ class FasterRCNN(nn.Module):
                 resnet_layers.append(layer)
             backbone_layers = resnet_layers[:-3]
             self.backbone = torch.nn.Sequential(*backbone_layers) # Take output features of conv_4 layer]
+            # breakpoint()
             # # Uncomment to freeze backbone
             # for name, layer in self.backbone.named_parameters(): 
             #     layer.requires_grad = False  
-            # print('Backbone freezed')      
-
-        if semantic_embedding is not None:
-            semantic_embedding = torch.from_numpy(semantic_embedding).float().to(device)
+            # print('Backbone freezed')     
         self.rpn = RegionProposalNetwork(model_config['backbone_out_channels'],
                                          scales=model_config['scales'],
                                          aspect_ratios=model_config['aspect_ratios'],
                                          model_config=model_config)
-        self.roi_head = ROIHead(model_config, num_classes, num_seen_classes,
-                                in_channels=model_config['backbone_out_channels'], 
-                                semantic_embedding = semantic_embedding)
+        self.roi_head = ROIHead(model_config, seen_classes, unseen_classes, semantic_embeddings, cls2asso)
 
         self.image_mean = [0.485, 0.456, 0.406]
         self.image_std = [0.229, 0.224, 0.225]
         self.min_size = model_config['min_im_size']
         self.max_size = model_config['max_im_size']
-    def _freeze_backbone(self):
-        if self.model_config['backbone'] == 'vgg16':
-            for layer in self.backbone[:10]:
-                for p in layer.parameters():
-                    p.requires_grad = False    
-            # breakpoint()
-        elif self.model_config['backbone'] == 'resnet101':
-            # Uncomment to freeze backbone
-            for name, layer in self.backbone.named_parameters(): 
-                layer.requires_grad = False  
-        print('Backbone freezed')      
-    def _unfreeze_backbone(self):
-        for name, layer in self.backbone.named_parameters(): 
-            layer.requires_grad = True
+    
     def normalize_resize_image_and_boxes(self, image, bboxes):
         dtype, device = image.dtype, image.device
         
@@ -942,7 +914,7 @@ class FasterRCNN(nn.Module):
             bboxes = torch.stack((xmin, ymin, xmax, ymax), dim=2)
         return image, bboxes
     
-    def forward(self, image, target=None):
+    def forward(self, image, target=None, pred_style = 'trad'):
         old_shape = image.shape[-2:]
         if self.training:
             # Normalize and resize boxes
@@ -957,62 +929,104 @@ class FasterRCNN(nn.Module):
         # Call RPN and get proposals
         rpn_output = self.rpn(image, feat, target)
         proposals = rpn_output['proposals']
-        # breakpoint()
-        # zero_target = (target['bboxes'][:,:,0] - target['bboxes'][:,:,2] == 0)
-        # if target['bboxes'][zero_target].shape[0] > 0:
-        #     print('Warning')
-        #     target['bboxes'] = target['bboxes'][~zero_target].unsqueeze(0)
+        
         # Call ROI head and convert proposals to boxes
-        frcnn_output = self.roi_head(feat, proposals, image.shape[-2:], target)
+        frcnn_output = self.roi_head(feat, proposals, image.shape[-2:], target, pred_style)
         if not self.training:
             # Transform boxes to original image dimensions called only during inference
             frcnn_output['boxes'] = transform_boxes_to_original_size(frcnn_output['boxes'],
                                                                      image.shape[-2:],
                                                                      old_shape)
-        # print(rpn_output['rpn_localization_loss'])
-        # if torch.isinf(rpn_output['rpn_localization_loss']) == True:
-        #     print('breakpoint')
-        #     breakpoint()
         return rpn_output, frcnn_output
 
-def seSoftmax(tensor):
-    '''
-        Expect 2D-tensor
-        Return: 2D-tensor
-    '''
-    _tensor = tensor.clone()
-    for row in range(tensor.shape[0]):
-        index = _tensor[row,:] != 1
-        _tensor[row, index] = torch.nn.functional.softmax(_tensor[row, index], dim = -1)
-    return _tensor
-
-def EuDist(a, b):
-    '''
-        Expect: a, b 1D tensor
-    '''
-    return torch.sqrt(torch.sum((a - b)**2))
 
 
-def TripletLoss(S, w):
-    '''
-        Args:
-        **w**: projected_class_embeddings
-    '''
-    n_classes = S.shape[0]
-
-    L = []
-    for j in range(n_classes):
-        sorted_idx = torch.argsort(-S[j,:])
-        most_similar = sorted_idx[1].item()
-        least_similar = sorted_idx[-1].item()
-        margin = S[j, most_similar] - S[j, least_similar]
-
-        loss = torch.max(torch.tensor(0.).to(device), EuDist(w[j,:], w[most_similar,:]) - EuDist(w[j,:], w[least_similar, :]) + margin)
-
-        L.append(loss)
-        # breakpoint()
-
-    L = torch.stack(L)
-    L = torch.mean(L)
+def normal_init(m, mean, stddev, truncated=False):
+  """
+  weight initalizer: truncated normal and random normal.
+  """
+  if truncated:
+      m.weight.data.normal_().fmod_(2).mul_(stddev).add_(mean) # not a perfect approximation
+  else:
+      m.weight.data.normal_(mean, stddev)
+      m.bias.data.zero_()
+      
+class ZSD_block(nn.Module):
+  def __init__(self, context_top, semantic_embeddings, seen_classes, unseen_classes, cls2asso):
+    super(ZSD_block, self).__init__()
     
-    return L
+    self.embeddings_dim = semantic_embeddings.shape[1]
+    self.context_top = context_top
+    self.cosine = False # True # wheather or not to use cosine classifier, may obtain higher pergformance with cosine classifier
+    self.seen_classes = seen_classes
+    self.unseen_classes = unseen_classes
+    self.cls2asso = cls2asso 
+
+    # self.semantic_embedding = semantic_embedding
+    if isinstance(semantic_embeddings, np.ndarray): 
+        semantic_embeddings = torch.from_numpy(semantic_embeddings).to(device)
+    emb_size = semantic_embeddings.shape[1]
+    
+    bg_ = torch.zeros((1, emb_size)).to(device)
+    bg_[0, 0] = 1
+    semantic_embeddings = torch.cat([bg_, semantic_embeddings]) # For this one we use background vector (1, 0, ..., 0)
+    
+    all_cats = seen_classes + unseen_classes
+    # get distribution
+    self.no_relation_cls = []
+    id2asso_dist = semantic_embeddings.new_zeros([semantic_embeddings.size(0), len(unseen_classes)])
+    # breakpoint()
+    for i, c in enumerate(all_cats):
+      if c == '__background__':
+        continue
+      association = cls2asso[c]
+      if type(association) is list: # seen class, assign a association distribution with unseen targets
+        if sum(association) == 0:
+            self.no_relation_cls.append([i, c])
+        id2asso_dist[i] = torch.tensor(association)
+      else: # unseen targets, assign 1 to their indices
+        id2asso_dist[i][association] = 1
+    if self.no_relation_cls: # in case some seen classes have no concept association to the unseen targets
+      print(self.no_relation_cls)
+
+    self.embeddings = torch.transpose(semantic_embeddings, 0, 1)
+    self.id2asso_dist = id2asso_dist
+
+    self.fc = nn.Linear(1024, self.embeddings_dim) # 
+    normal_init(self.fc, 0, 0.01)
+
+    self.fc_super_cls = nn.Linear(1024, len(unseen_classes)) # 
+    normal_init(self.fc_super_cls, 0, 0.01)
+
+  def forward(self, x, aligned_feat, cls_label = None):
+    # breakpoint()
+    if self.training:
+        emb = self.embeddings[:,:len(self.seen_classes)] 
+    else:
+        emb = self.embeddings
+    x_emb = self.fc(x)
+    if self.cosine:
+        x_emb = 20*cosine_similarity(x_emb.float(), emb.float())
+    else:
+        x_emb = torch.mm(x_emb.float(), emb.float())
+    x_context = self.context_top(aligned_feat)
+    x_asso = self.fc_super_cls(x_context)
+    if self.training:
+        id2asso_dist = self.id2asso_dist[:len(self.seen_classes)]        
+        asso_dist = id2asso_dist[cls_label]
+        # breakpoint()
+        loss = F.binary_cross_entropy(torch.sigmoid(x_asso).float(), asso_dist.float())
+    else:
+        loss = None
+    
+    return x_emb, x_asso, loss # cls_score, asso_score 
+    
+
+def cosine_similarity(x1, x2, eps=1e-8):
+  # x1: B x emb_dim
+  # x2: emb_dim x #cls
+  dot12 = torch.mm(x1, x2) #-> B x #cls
+  w1 = torch.norm(x1, 2, dim=1, keepdim=True) #-> B x 1
+  w2 = torch.norm(x2, 2, dim=0, keepdim=True) #-> 1 x #cls
+  w12 = torch.mm(w1, w2).clamp(min=eps) #-> B x #cls
+  return (dot12/w12)

@@ -10,17 +10,16 @@ dataset_params:
   # im_test_unseen_path:   '/home/qdinh/data/DOTA/images/train2017unseen'
   # ann_test_unseen_path:  '/home/qdinh/data/DOTA/annotations_VOCstyle/train2017unseen'
   dataset_name: DOTA
-  num_classes : 13
-
+  num_classes : 13 # for training on dataset with only seen classes
 model_params:
   style: 'trad'
   im_channels : 3
-  aspect_ratios: [0.5, 1, 2]
-  scales: [16, 32, 48, 64, 128, 256] # Add more scales to detect small objects
-  min_im_size : 600
+  aspect_ratios: [0.3, 0.5, 1, 2, 4]
+  scales: [8, 16, 32, 48, 64, 128, 256, 512] # Add more scales to detect small objects
+  min_im_size : 800
   max_im_size : 1000
-  backbone: 'vgg16'
-  backbone_out_channels : 512
+  backbone: 'resnet101'
+  backbone_out_channels : 1024
   fc_inner_dim : 1024
   rpn_bg_threshold : 0.3
   rpn_fg_threshold : 0.7
@@ -29,7 +28,7 @@ model_params:
   rpn_test_prenms_topk : 6000
   rpn_train_topk : 2000
   rpn_test_topk : 300
-  rpn_batch_size : 512
+  rpn_batch_size : 256
   rpn_pos_fraction : 0.5
   roi_iou_threshold : 0.5
   roi_low_bg_iou : 0.1 # increase it to 0.1 for hard negative
@@ -37,7 +36,7 @@ model_params:
   roi_nms_threshold : 0.3
   roi_topk_detections : 100
   roi_score_threshold : 0.05
-  roi_batch_size : 512
+  roi_batch_size : 128
   roi_pos_fraction : 0.25
 
 train_params:

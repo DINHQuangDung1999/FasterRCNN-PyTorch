@@ -289,17 +289,16 @@ class Normalize(object):
             else:
                 boxes = boxes / torch.tensor([w, h, w, h], dtype=torch.float32)
             target["bboxes"] = boxes
-        
-        if image.shape[0] == 3:
-            image = image.permute(1,2,0)
         return image, target
 
 class Resizer(object):
     """Convert ndarrays in sample to Tensors and reshape to (channels, height, width)"""
 
-    def __call__(self, image, target, min_side=600, max_side=1000):
+    def __call__(self, image, target, min_side=640, max_side=1024):
         if isinstance(image, torch.Tensor):
             image = image.cpu().numpy()
+        if image.shape[0] == 3:
+            image = image.transpose(1,2,0)
         rows, cols, cns = image.shape
 
         smallest_side = min(rows, cols)
@@ -318,15 +317,21 @@ class Resizer(object):
         # breakpoint()
         image = skimage.transform.resize(image, (int(round(rows*scale)), int(round((cols*scale)))))
         rows, cols, cns = image.shape
-
-        pad_w = 32 - rows%32
-        pad_h = 32 - cols%32
-
+        
+        if rows%32 != 0:
+            pad_w = 32 - rows%32
+        else:
+            pad_w = 0
+        if cols%32 != 0:
+            pad_h = 32 - cols%32
+        else:
+            pad_h = 0
+            
         new_image = np.zeros((rows + pad_w, cols + pad_h, cns)).astype(np.float32)
         new_image[:rows, :cols, :] = image.astype(np.float32)
 
-        target["bboxes"] *= scale
-        target["scale"] = scale
+        target['boxes'] *= scale
+        target['scale'] = scale
 
         new_image = torch.from_numpy(new_image)
 

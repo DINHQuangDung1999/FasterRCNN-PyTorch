@@ -55,11 +55,11 @@ class PyramidFeatures(nn.Module):
         return [P3_x, P4_x, P5_x, P6_x, P7_x]
 
 
-class RetinaNet(nn.Module):
+class FPNResNet(nn.Module):
 
     def __init__(self, block, layers):
         self.inplanes = 64
-        super(RetinaNet, self).__init__()
+        super(FPNResNet, self).__init__()
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
         self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU(inplace=True)
@@ -196,23 +196,23 @@ class Bottleneck(nn.Module):
         return out
 
 
-def RetinaNet50(pretrained=True, **kwargs):
+def FPNResNet50(pretrained=True, **kwargs):
     """Constructs a ResNet-50 model.
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
     """
-    model = RetinaNet(Bottleneck, [3, 4, 6, 3], **kwargs)
+    model = FPNResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
     if pretrained:
         model.load_state_dict(model_zoo.load_url(model_urls['resnet50'], model_dir='.'), strict=False)
     return model
 
 
-def RetinaNet101(pretrained=True, **kwargs):
+def FPNResNet101(pretrained=True, **kwargs):
     """Constructs a ResNet-101 model.
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
     """
-    model = RetinaNet(Bottleneck, [3, 4, 23, 3], **kwargs)
+    model = FPNResNet(Bottleneck, [3, 4, 23, 3], **kwargs)
     if pretrained:
         model.load_state_dict(model_zoo.load_url(model_urls['resnet101'], model_dir='.'), strict=False)
     return model

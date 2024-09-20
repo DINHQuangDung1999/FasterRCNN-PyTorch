@@ -15,8 +15,8 @@ dataset_params:
 model_params:
   style: 'zsd'
   im_channels : 3
-  aspect_ratios: [0.5, 1, 2]
-  scales: [16, 32, 48, 64, 128, 256]
+  aspect_ratios: [0.3, 0.5, 1, 2, 4]
+  scales: [16, 32, 48, 64, 128]
   min_im_size : 600
   max_im_size : 1000
   backbone: 'resnet101'
@@ -34,7 +34,7 @@ model_params:
   roi_iou_threshold : 0.5
   roi_low_bg_iou : 0.1 # increase it to 0.1 for hard negative
   roi_pool_size : 7
-  roi_nms_threshold : 0.3
+  roi_nms_threshold : 0.7
   roi_topk_detections : 100
   roi_score_threshold : 0.05
   roi_batch_size : 128
@@ -45,8 +45,8 @@ train_params:
   seed : 1111
   acc_steps : 1 # increase you want to get gradients from >1 steps(kind of mimicking >1 batch size)
   num_epochs: 20
-  lr_steps : [12, 16]
-  lr: 0.00001
+  lr_steps : [4, 8, 12, 16]
+  lr: 0.0001
   # lr: 0.001
   ckpt_name: 'frcnn_trad'
   eval_every: 5

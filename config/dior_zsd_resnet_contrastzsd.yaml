@@ -1,17 +1,22 @@
 dataset_params:
-
   root_dir:  '/home/qdinh/data'
   train_setname: 'trainvalseen'
   testseen_setname: 'testseen'
   testunseen_setname: 'testunseen'
+  # im_train_path:  '/home/qdinh/data/DIOR/images/trainvalseen'
+  # ann_train_path: '/home/qdinh/data/DIOR/annotations_VOCstyle/trainvalseen'
+  # im_test_seen_path:   '/home/qdinh/data/DIOR/images/testseen'
+  # ann_test_seen_path:  '/home/qdinh/data/DIOR/annotations_VOCstyle/testseen'
+  # im_test_unseen_path:   '/home/qdinh/data/DIOR/images/testunseen'
+  # ann_test_unseen_path:  '/home/qdinh/data/DIOR/annotations_VOCstyle/testunseen'
   dataset_name: DIOR
-  num_classes : 17 # for training on dataset with only seen classes
-
+  num_classes : 21
+  num_seen_classes : 17
 model_params:
-  style: 'trad'
+  style: 'zsd'
   im_channels : 3
   aspect_ratios: [0.3, 0.5, 1, 2, 4]
-  scales: [8, 16, 32, 48, 64, 128, 256, 512] # Add more scales to detect small objects
+  scales: [8, 16, 32, 48, 64, 128, 256, 512]
   min_im_size : 800
   max_im_size : 1000
   backbone: 'resnet101'
@@ -29,19 +34,23 @@ model_params:
   roi_iou_threshold : 0.5
   roi_low_bg_iou : 0.1 # increase it to 0.1 for hard negative
   roi_pool_size : 7
-  roi_nms_threshold : 0.3
+  roi_nms_threshold : 0.7
   roi_topk_detections : 100
   roi_score_threshold : 0.05
   roi_batch_size : 128
   roi_pos_fraction : 0.25
+  tau: 0.1
+  beta: 0.4
+  lambda: 0.2
 
 train_params:
   ckpt_path: '/home/qdinh/FasterRCNN-PyTorch/checkpoints/DIOR'
   seed : 1111
   acc_steps : 1 # increase you want to get gradients from >1 steps(kind of mimicking >1 batch size)
-  num_epochs: 30
-  lr_steps : [12, 16]
-  lr: 0.00001
+  num_epochs: 20
+  lr_steps : [4, 8, 12, 16]
+  lr: 0.0001
   # lr: 0.001
-  ckpt_name: 'frcnn_trad'
+  ckpt_name: 'frcnn'
   eval_every: 5
+  

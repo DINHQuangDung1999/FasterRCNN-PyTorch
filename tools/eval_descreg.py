@@ -10,16 +10,40 @@ from tqdm import tqdm
 from model.faster_rcnn import FasterRCNN
 from dataset.voc import VOCDataset
 import matplotlib.pyplot as plt 
-from tools.embedding import get_embeddings
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-def predict_coco(detector, dataset_test, style, semantic_embedding = None, threshold = 0.05):
-    if style == 'zsd':
-        assert semantic_embedding is not None
-        # semantic_embedding = semantic_embedding[1:,:] # exclude background
-    elif style == 'trad':
-        assert semantic_embedding is None
-    # start collecting results
+def load_model_and_dataset(args):
+    # Read the config file #
+
+    with open(args.config_path, 'r') as file:
+        try:
+            config = yaml.safe_load(file)
+        except yaml.YAMLError as exc:
+            print(exc)
+    print(config)
+    ########################
+    
+    dataset_config = config['dataset_params']
+    model_config = config['model_params']
+    train_config = config['train_params']
+    
+    seed = train_config['seed']
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    if device == 'cuda':
+        torch.cuda.manual_seed_all(seed)
+    
+    dataset_test = VOCDataset('test', im_dir=dataset_config['im_test_seen_path'], ann_dir=dataset_config['ann_test_seen_path'], is_zsd = True)
+    # test_dataset = DataLoader(voc, batch_size=1, shuffle=False)
+    
+    faster_rcnn_model = FasterRCNN(model_config, num_classes=dataset_config['num_classes'])
+    faster_rcnn_model.eval()
+    faster_rcnn_model.to(device)
+    faster_rcnn_model.load_state_dict(torch.load(os.path.join(train_config['ckpt_path'],args['ckpt']),map_location=device))
+    return faster_rcnn_model, dataset_test
+
+def predict_coco(detector, dataset_test, pred_style, threshold = 0.05):
     results = []
     detector.eval()
     with torch.no_grad():
@@ -27,7 +51,7 @@ def predict_coco(detector, dataset_test, style, semantic_embedding = None, thres
             im, target, fname, im_id = data
 
             im = im.float().to(device).unsqueeze(0)
-            rpn_output, frcnn_output = detector(im, target = None, style = style, semantic_embedding=semantic_embedding)
+            rpn_output, frcnn_output = detector(im, target = None, pred_style = pred_style)
             
             boxes = frcnn_output['boxes'].detach().cpu().numpy()
             labels = frcnn_output['labels'].detach().cpu().numpy()

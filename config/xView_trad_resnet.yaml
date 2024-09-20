@@ -1,17 +1,15 @@
 dataset_params:
-
   root_dir:  '/home/qdinh/data'
-  train_setname: 'trainvalseen'
-  testseen_setname: 'testseen'
+  train_setname: 'trainseen'
+  testseen_setname: 'testmix'
   testunseen_setname: 'testunseen'
-  dataset_name: DIOR
-  num_classes : 17 # for training on dataset with only seen classes
-
+  dataset_name: xView
+  num_classes : 49 # for training on dataset with only seen classes
 model_params:
   style: 'trad'
   im_channels : 3
   aspect_ratios: [0.3, 0.5, 1, 2, 4]
-  scales: [8, 16, 32, 48, 64, 128, 256, 512] # Add more scales to detect small objects
+  scales: [4, 8, 16, 32, 48, 64, 128, 256] # Add more scales to detect small objects
   min_im_size : 800
   max_im_size : 1000
   backbone: 'resnet101'
@@ -36,11 +34,11 @@ model_params:
   roi_pos_fraction : 0.25
 
 train_params:
-  ckpt_path: '/home/qdinh/FasterRCNN-PyTorch/checkpoints/DIOR'
+  ckpt_path: '/home/qdinh/FasterRCNN-PyTorch/checkpoints/xView'
   seed : 1111
   acc_steps : 1 # increase you want to get gradients from >1 steps(kind of mimicking >1 batch size)
   num_epochs: 30
-  lr_steps : [12, 16]
+  lr_steps : [4, 8, 12, 16]
   lr: 0.00001
   # lr: 0.001
   ckpt_name: 'frcnn_trad'
